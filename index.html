@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Gestió - Lourdes</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const TaskManager = () => {
+            const [tasks, setTasks] = useState([]);
+            const [filter, setFilter] = useState('all');
+            const [view, setView] = useState('tasks');
+            const [showAddForm, setShowAddForm] = useState(false);
+            const [newTask, setNewTask] = useState({
+                description: '',
+                department: '',
+                status: 'Pendent',
+                timeTracked: 0,
+                budget: '',
+                clientName: '',
+                clientResponsible: '',
+                clientProject: '',
+                notes: '',
+                deliveryDate: ''
+            });
+
+            const departments = [
+                'Direcció', 'Consultoria', 'Supervisió Cine', 'Publicitat', 
+                'Juny', 'Fronterah', 'Editorial', 'Financer'
+            ];
+
+            const statusOptions = [
+                'Completat', 'In progress', 'Pendent', 'Espero resposta client', 'Espero resposta 3ers'
+            ];
+
+            useEffect(() => {
+                const savedTasks = localStorage.getItem('lourdes-tasks-v2');
+                if (savedTasks) {
+                    setTasks(JSON.parse(savedTasks));
+                }
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('lourdes-tasks-v2', JSON.stringify(tasks));
+            }, [tasks]);
+
+            const formatTime = (minutes) => {
+                const hours = Math.floor(minutes / 60);
+                const mins = minutes % 60;
+                return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+            };
+
+            const addTime = (taskId, minutes) => {
+                setTasks(tasks.map(task => 
+                    task.id === taskId 
+                        ? { ...task, timeTracked: (task.timeTracked || 0) + minutes }
+                        : task
+                ));
+            };
+
+            const exportToExcel = () => {
+                const tasksData = tasks.map(task => ({
+                    'Descripció': task.description,
+                    'Departament': task.department,
+                    'Status': task.status,
+                    'Temps (hores)': ((task.timeTracked || 0) / 60).toFixed(2),
+                    'Pressupost (€)': task.budget ? parseFloat(task.budget).toFixed(2) : '0.00',
+                    'Client': task.clientName,
+                    'Responsable Client': task.clientResponsible,
+                    'Projecte': task.clientProject,
+                    'Data Entrega': task.deliveryDate ? new Date(task.deliveryDate).toLocaleDateString('ca-ES') : '',
+                    'Notes': task.notes,
+                    'Data Creació': new Date(task.createdAt).toLocaleDateString('ca-ES')
+                }));
+
+                const analytics = {
+                    totalTasks: tasks.length,
+                    completedTasks: tasks.filter(t => t.status === 'Completat').length,
+                    pendingTasks: tasks.filter(t => t.status === 'Pendent').length,
+                    inProgressTasks: tasks.filter(t => t.status === 'In progress').length,
+                    waitingClientTasks: tasks.filter(t => t.status === 'Espero resposta client').length,
+                    waitingThirdTasks: tasks.filter(t => t.status === 'Espero resposta 3ers').length,
+                    totalBudget: tasks.reduce((sum, t) => sum + (parseFloat(t.budget) || 0), 0),
+                    totalHoursWorked: tasks.reduce((sum, t) => sum + (t.timeTracked || 0), 0) / 60,
+                    byDepartment: {},
+                    byClient: {}
+                };
+
+                tasks.forEach(task => {
+                    if (task.department) {
+                        analytics.byDepartment[task.department] = (analytics.byDepartment[task.department] || 0) + 1;
+                    }
+                    if (task.clientName) {
+                        analytics.byClient[task.clientName] = (analytics.byClient[task.clientName] || 0) + 1;
+                    }
+                });
+
+                const analyticsData = [
+                    ['Mètrica', 'Valor'],
+                    ['Total Tasques', analytics.totalTasks],
+                    ['Tasques Completades', analytics.completedTasks],
+                    ['Tasques Pendents', analytics.pendingTasks],
+                    ['Tasques En Progres', analytics.inProgressTasks],
+                    ['Espero Resposta Client', analytics.waitingClientTasks],
+                    ['Espero Resposta 3ers', analytics.waitingThirdTasks],
+                    ['Total Pressupost (€)', analytics.totalBudget.toFixed(2)],
+                    ['Total Hores Treballades', analytics.totalHoursWorked.toFixed(2)],
+                    [''],
+                    ['Tasques per Departament', ''],
+                    ...Object.entries(analytics.byDepartment),
+                    [''],
+                    ['Tasques per Client', ''],
+                    ...Object.entries(analytics.byClient).filter(([client]) => client.trim() !== '')
+                ];
+
+                const wb = XLSX.utils.book_new();
+                const wsTaskes = XLSX.utils.json_to_sheet(tasksData);
+                XLSX.utils.book_append_sheet(wb, wsTaskes, "Tasques");
+                const wsAnalytics = XLSX.utils.aoa_to_sheet(analyticsData);
+                XLSX.utils.book_append_sheet(wb, wsAnalytics, "Analytics");
+
+                const today = new Date().toISOString().split('T')[0];
+                const filename = `gestio-tasques-${today}.xlsx`;
+                XLSX.writeFile(wb, filename);
+            };
+
+            const addTask = () => {
+                if (!newTask.description.trim()) return;
+                
+                const task = {
+                    ...newTask,
+                    id: Date.now(),
+                    createdAt: new Date().toISOString(),
+                    budget: parseFloat(newTask.budget) || 0
+                };
+                
+                setTasks([...tasks, task]);
+                setNewTask({
+                    description: '',
+                    department: '',
+                    status: 'Pendent',
+                    timeTracked: 0,
+                    budget: '',
+                    clientName: '',
+                    clientResponsible: '',
+                    clientProject: '',
+                    notes: '',
+                    deliveryDate: ''
+                });
+                setShowAddForm(false);
+            };
+
+            const updateTask = (id, updates) => {
+                setTasks(tasks.map(task => 
+                    task.id === id ? { ...task, ...updates } : task
+                ));
+            };
+
+            const deleteTask = (id) => {
+                setTasks(tasks.filter(task => task.id !== id));
+            };
+
+            const filteredTasks = tasks.filter(task => {
+                if (filter === 'all') return true;
+                if (filter === 'pending') return task.status === 'Pendent';
+                if (filter === 'in-progress') return task.status === 'In progress';
+                if (filter === 'completed') return task.status === 'Completat';
+                if (filter === 'waiting-client') return task.status === 'Espero resposta client';
+                if (filter === 'waiting-third') return task.status === 'Espero resposta 3ers';
+                return true;
+            });
+
+            const getStatusColor = (status) => {
+                switch (status) {
+                    case 'Completat': return 'bg-green-100 text-green-800 border-green-300';
+                    case 'In progress': return 'bg-blue-100 text-blue-800 border-blue-300';
+                    case 'Pendent': return 'bg-red-100 text-red-800 border-red-300';
+                    case 'Espero resposta client': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+                    case 'Espero resposta 3ers': return 'bg-purple-100 text-purple-800 border-purple-300';
+                    default: return 'bg-gray-100 text-gray-800 border-gray-300';
+                }
+            };
+
+            const analytics = {
+                totalTasks: tasks.length,
+                completedTasks: tasks.filter(t => t.status === 'Completat').length,
+                pendingTasks: tasks.filter(t => t.status === 'Pendent').length,
+                inProgressTasks: tasks.filter(t => t.status === 'In progress').length,
+                waitingClientTasks: tasks.filter(t => t.status === 'Espero resposta client').length,
+                waitingThirdTasks: tasks.filter(t => t.status === 'Espero resposta 3ers').length,
+                totalBudget: tasks.reduce((sum, t) => sum + (parseFloat(t.budget) || 0), 0),
+                totalHoursWorked: tasks.reduce((sum, t) => sum + (t.timeTracked || 0), 0) / 60,
+                byDepartment: {},
+                byClient: {}
+            };
+
+            tasks.forEach(task => {
+                if (task.department) {
+                    analytics.byDepartment[task.department] = (analytics.byDepartment[task.department] || 0) + 1;
+                }
+                if (task.clientName) {
+                    analytics.byClient[task.clientName] = (analytics.byClient[task.clientName] || 0) + 1;
+                }
+            });
+
+            return (
+                <div className="min-h-screen bg-gray-50 p-4">
+                    <div className="max-w-7xl mx-auto">
+                        {/* Header */}
+                        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+                            <div className="flex items-center justify-between">
+                                <h1 className="text-2xl font-bold text-gray-900">Sistema de Gestió - Lourdes</h1>
+                                <div className="flex items-center space-x-4">
+                                    <button
+                                        onClick={exportToExcel}
+                                        className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700"
+                                    >
+                                        📊 Exportar Excel
+                                    </button>
+                                    <div className="flex space-x-2">
+                                        <button
+                                            onClick={() => setView('tasks')}
+                                            className={`px-4 py-2 rounded-md ${view === 'tasks' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                                        >
+                                            Tasques
+                                        </button>
+                                        <button
+                                            onClick={() => setView('analytics')}
+                                            className={`px-4 py-2 rounded-md ${view === 'analytics' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                                        >
+                                            📈 Analytics
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {view === 'tasks' && (
+                            <div>
+                                {/* Filters */}
+                                <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center space-x-4">
+                                            <span>🔍</span>
+                                            <select 
+                                                value={filter} 
+                                                onChange={(e) => setFilter(e.target.value)}
+                                                className="border border-gray-300 rounded-md px-3 py-1"
+                                            >
+                                                <option value="all">Totes les tasques</option>
+                                                <option value="pending">Pendents</option>
+                                                <option value="in-progress">En progres</option>
+                                                <option value="completed">Completades</option>
+                                                <option value="waiting-client">Espero client</option>
+                                                <option value="waiting-third">Espero 3ers</option>
+                                            </select>
+                                        </div>
+                                        <button
+                                            onClick={() => setShowAddForm(!showAddForm)}
+                                            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+                                        >
+                                            ➕ Nova Tasca
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Add Form */}
+                                {showAddForm && (
+                                    <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+                                        <h2 className="text-lg font-semibold mb-4">Nova Tasca</h2>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            <div className="md:col-span-2 lg:col-span-3">
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">1. Descripció</label>
+                                                <textarea
+                                                    value={newTask.description}
+                                                    onChange={(e) => setNewTask({...newTask, description: e.target.value})}
+                                                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                                    placeholder="Descripció de la tasca"
+                                                    rows="2"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">2. Departament</label>
+                                                <select
+                                                    value={newTask.department}
+                                                    onChange={(e) => setNewTask({...newTask, department: e.target.value})}
+                                                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                                >
+                                                    <option value="">Seleccionar departament</option>
+                                                    {departments.map(dept => (
+                                                        <option key={dept} value={dept}>{dept}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">3. Status</label>
+                                                <select
+                                                    value={newTask.status}
+                                                    onChange={(e) => setNewTask({...newTask, status: e.target.value})}
+                                                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                                >
+                                                    {statusOptions.map(status => (
+                                                        <option key={status} value={status}>{status}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">5. Pressupost (€)</label>
+                                                <input
+                                                    type="number"
+                                                    value={newTask.budget}
+                                                    onChange={(e) => setNewTask({...newTask, budget: e.target.value})}
+                                                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                                    placeholder="0,00"
+                                                    step="0.01"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">6. Nom client</label>
+                                                <input
+                                                    type="text"
+                                                    value={newTask.clientName}
+                                                    onChange={(e) => setNewTask({...newTask, clientName: e.target.value})}
+                                                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                                    placeholder="Nom del client"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">7. Responsable client</label>
+                                                <input
+                                                    type="text"
+                                                    value={newTask.clientResponsible}
+                                                    onChange={(e) => setNewTask({...newTask, clientResponsible: e.target.value})}
+                                                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                                    placeholder="Persona responsable"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">8. Projecte client</label>
+                                                <input
+                                                    type="text"
+                                                    value={newTask.clientProject}
+                                                    onChange={(e) => setNewTask({...newTask, clientProject: e.target.value})}
+                                                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                                    placeholder="Nom del projecte"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">10. Data entrega</label>
+                                                <input
+                                                    type="date"
+                                                    value={newTask.deliveryDate}
+                                                    onChange={(e) => setNewTask({...newTask, deliveryDate: e.target.value})}
+                                                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                                />
+                                            </div>
+                                            <div className="md:col-span-2 lg:col-span-3">
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">9. Notes</label>
+                                                <textarea
+                                                    value={newTask.notes}
+                                                    onChange={(e) => setNewTask({...newTask, notes: e.target.value})}
+                                                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                                    placeholder="Notes addicionals"
+                                                    rows="2"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="flex space-x-3 mt-6">
+                                            <button
+                                                onClick={addTask}
+                                                className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700"
+                                            >
+                                                Crear Tasca
+                                            </button>
+                                            <button
+                                                onClick={() => setShowAddForm(false)}
+                                                className="bg-gray-300 text-gray-700 px-6 py-2 rounded-md hover:bg-gray-400"
+                                            >
+                                                Cancel·lar
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Tasks Grid */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {filteredTasks.map(task => (
+                                        <div key={task.id} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                                            <div className="flex items-start justify-between mb-3">
+                                                <h3 className="font-medium text-gray-900 flex-1 pr-2">{task.description}</h3>
+                                                <span className={`px-2 py-1 text-xs rounded-full border ${getStatusColor(task.status)}`}>
+                                                    {task.status}
+                                                </span>
+                                            </div>
+                                            
+                                            <div className="grid grid-cols-1 gap-1 text-sm text-gray-600 mb-3">
+                                                {task.department && <div><strong>Departament:</strong> {task.department}</div>}
+                                                {task.clientName && <div><strong>Client:</strong> {task.clientName}</div>}
+                                                {task.clientProject && <div><strong>Projecte:</strong> {task.clientProject}</div>}
+                                                {task.clientResponsible && <div><strong>Responsable:</strong> {task.clientResponsible}</div>}
+                                                {task.deliveryDate && <div><strong>Entrega:</strong> {new Date(task.deliveryDate).toLocaleDateString('ca-ES')}</div>}
+                                            </div>
+
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center space-x-2">
+                                                    <span>⏱️</span>
+                                                    <span className="font-mono text-sm">{formatTime(task.timeTracked || 0)}</span>
+                                                    <button
+                                                        onClick={() => addTime(task.id, 15)}
+                                                        className="bg-green-100 text-green-600 px-2 py-1 rounded text-xs"
+                                                    >
+                                                        +15min
+                                                    </button>
+                                                    <button
+                                                        onClick={() => addTime(task.id, 30)}
+                                                        className="bg-blue-100 text-blue-600 px-2 py-1 rounded text-xs"
+                                                    >
+                                                        +30min
+                                                    </button>
+                                                </div>
+                                                {(task.budget > 0) && (
+                                                    <div className="text-sm text-gray-600">
+                                                        💰 {parseFloat(task.budget).toFixed(2)}€
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {task.notes && (
+                                                <p className="text-sm text-gray-600 mb-3 italic bg-gray-50 p-2 rounded">{task.notes}</p>
+                                            )}
+
+                                            <div className="flex items-center justify-between border-t pt-3">
+                                                <select 
+                                                    value={task.status} 
+                                                    onChange={(e) => updateTask(task.id, { status: e.target.value })}
+                                                    className="text-xs border border-gray-300 rounded px-2 py-1 flex-1 mr-2"
+                                                >
+                                                    {statusOptions.map(status => (
+                                                        <option key={status} value={status}>{status}</option>
+                                                    ))}
+                                                </select>
+                                                <button 
+                                                    onClick={() => deleteTask(task.id)}
+                                                    className="text-red-500 hover:text-red-700 text-sm"
+                                                >
+                                                    🗑️
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {filteredTasks.length === 0 && (
+                                    <div className="bg-white rounded-lg shadow-sm p-8 text-center">
+                                        <p className="text-gray-500">No hi ha tasques que coincideixin amb el filtre seleccionat.</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {view === 'analytics' && (
+                            <div className="space-y-6">
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                                    <div className="bg-red-50 p-4 rounded-lg border border-red-200">
+                                        <h3 className="font-semibold text-red-900">Pendents</h3>
+                                        <p className="text-2xl font-bold text-red-600">{analytics.pendingTasks}</p>
+                                    </div>
+                                    <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                                        <h3 className="font-semibold text-green-900">Entregades</h3>
+                                        <p className="text-2xl font-bold text-green-600">{analytics.completedTasks}</p>
+                                    </div>
+                                    <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                                        <h3 className="font-semibold text-blue-900">En progres</h3>
+                                        <p className="text-2xl font-bold text-blue-600">{analytics.inProgressTasks}</p>
+                                    </div>
+                                    <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+                                        <h3 className="font-semibold text-purple-900">Hores</h3>
+                                        <p className="text-2xl font-bold text-purple-600">{analytics.totalHoursWorked.toFixed(1)}</p>
+                                    </div>
+                                    <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
+                                        <h3 className="font-semibold text-yellow-900">Pressupost</h3>
+                                        <p className="text-2xl font-bold text-yellow-600">{analytics.totalBudget.toFixed(0)}€</p>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="bg-white p-4 rounded-lg border">
+                                        <h3 className="font-semibold mb-3">Tasques per Departament</h3>
+                                        {Object.entries(analytics.byDepartment).map(([dept, count]) => (
+                                            <div key={dept} className="flex justify-between py-2 border-b border-gray-100">
+                                                <span className="text-sm">{dept}</span>
+                                                <span className="font-medium">{count}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    
+                                    <div className="bg-white p-4 rounded-lg border">
+                                        <h3 className="font-semibold mb-3">Tasques per Client</h3>
+                                        {Object.entries(analytics.byClient)
+                                            .filter(([client]) => client.trim() !== '')
+                                            .map(([client, count]) => (
+                                            <div key={client} className="flex justify-between py-2 border-b border-gray-100">
+                                                <span className="text-sm">{client}</span>
+                                                <span className="font-medium">{count}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<TaskManager />, document.getElementById('root'));
+    </script>
+</body>
+</html>
